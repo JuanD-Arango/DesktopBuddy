@@ -1,0 +1,40 @@
+# Entornos virtuales
+.venv/
+venv/
+ENV/
+env/
+
+# Byte-compiled / cache de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Archivos de distribución / empaquetado
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDEs y editores
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Sistema operativo
+Thumbs.db
+Desktop.ini
+.DS_Store
+
