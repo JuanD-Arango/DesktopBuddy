@@ -10,6 +10,7 @@ from PyQt6.QtGui import QMouseEvent, QAction, QPixmap, QCursor, QTransform, QIco
 from .physics import PhysicsEngine
 from .behavior import BehaviorController, BuddyState
 from .bubble import SpeechBubble, SoundManager
+from .mail import OutlookMailWatcher
 
 class DesktopBuddy(QWidget):
     def __init__(self):
@@ -18,6 +19,12 @@ class DesktopBuddy(QWidget):
         self.behavior = BehaviorController()
         self.sounds = SoundManager()
         self.speech_bubble = SpeechBubble()
+
+        # Monitor de correos vía Outlook
+        self.mail_watcher = OutlookMailWatcher(check_interval_sec=25, parent=self)
+        self.mail_watcher.new_email.connect(self._on_new_email)
+        self.mail_watcher.manual_check_result.connect(self._on_mail_manual_check)
+        self.mail_watcher.start()
 
         self._drag_active = False
         self._drag_pos = QPoint()
@@ -391,6 +398,17 @@ class DesktopBuddy(QWidget):
 
         menu.addSeparator()
 
+        # Menú de Notificaciones de Correo
+        mail_menu = menu.addMenu("📬 Correo Outlook...")
+        check_mail_act = mail_menu.addAction("🔄 Comprobar correo ahora")
+        check_mail_act.triggered.connect(lambda: self.mail_watcher.check_mail_async(is_manual=True))
+
+        mail_toggle_text = "🔔 Notificaciones: Activadas" if self.mail_watcher.enabled else "🔕 Notificaciones: Silenciadas"
+        toggle_mail_act = mail_menu.addAction(mail_toggle_text)
+        toggle_mail_act.triggered.connect(self._toggle_mail_notifications)
+
+        menu.addSeparator()
+
         # Alternar Sonidos
         sound_text = "🔇 Silenciar sonidos" if not self.sounds.muted else "🔊 Activar sonidos"
         sound_act = menu.addAction(sound_text)
@@ -407,6 +425,38 @@ class DesktopBuddy(QWidget):
         exit_act.triggered.connect(self.close)
 
         menu.exec(event.globalPos())
+
+    def _on_new_email(self, sender: str, subject: str):
+        """Reacción alegre y alerta al recibir un nuevo correo."""
+        self.physics.jump(13.0)
+        self.sounds.play("purr")
+        self.speech_bubble.show_message(
+            f"📬 ¡Nuevo correo de {sender}!\n\"{subject}\"",
+            self.x(), self.y(), self.width(),
+            duration_ms=6500
+        )
+
+    def _on_mail_manual_check(self, count: int, message: str):
+        """Muestra el resultado tras solicitar comprobación manual de correo."""
+        if count > 0:
+            self.physics.jump(10.0)
+            self.sounds.play("purr")
+        self.speech_bubble.show_message(
+            message,
+            self.x(), self.y(), self.width(),
+            duration_ms=4500
+        )
+
+    def _toggle_mail_notifications(self):
+        """Activa o desactiva las alertas de correo."""
+        enabled = self.mail_watcher.toggle_enabled()
+        status_msg = "🔔 Notificaciones de correo activadas." if enabled else "🔕 Notificaciones de correo silenciadas."
+        self.speech_bubble.show_message(status_msg, self.x(), self.y(), self.width(), duration_ms=2500)
+
+    def closeEvent(self, event):
+        """Detiene servicios en segundo plano al cerrar."""
+        self.mail_watcher.stop()
+        super().closeEvent(event)
 
     def _feed_item(self, item_name: str):
         self.sounds.play("eat")

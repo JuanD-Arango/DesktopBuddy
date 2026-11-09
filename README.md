@@ -35,8 +35,13 @@ Built with **Python**, **PyQt6**, and **Win32 API**.
   - **Drink:** Serve fresh water, hot tea, or energizing coffee.
   - **Rest Controls:** Put Hackmon to sleep or wake him up.
   - **Chase Mouse:** Activate the cursor-hunting mode.
+  - **Email Alerts (Outlook):** Check for new incoming emails manually or toggle email notification alerts.
   - **Drop from Top:** Fun action to drop Hackmon from the top of the monitor.
   - **Sound Toggle:** Enable or mute sound effects.
+- **📬 Email Notification Assistant (Outlook Classic):**
+  - Lightweight background watcher querying Outlook's local Inbox every 25 seconds via `pywin32` COM without dropping GUI framerates.
+  - Zero cloud credentials or app passwords needed: automatically syncs with your desktop Outlook email.
+  - Hackmon jumps with excitement, plays an alert sound, and displays the sender and subject in a customized speech bubble whenever an unread email arrives.
 - **Speech Bubble & Audio Effects:**
   - Interactive speech bubbles showing Hackmon's thoughts, reactions, and dialogue.
   - Procedural sound effects for landings, purrs, snacks, and emotions.
