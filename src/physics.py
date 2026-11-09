@@ -68,14 +68,22 @@ class PhysicsEngine:
 
         return target_floor
 
+    def jump(self, power: float = 16.0):
+        """Aplica un impulso vertical hacia arriba para saltar."""
+        self.velocity_y = -abs(power)
+
+    def is_in_air(self, current_y: int, floor_y: int) -> bool:
+        """Indica si Hackmon está suspendido o en movimiento vertical en el aire."""
+        return current_y < floor_y or self.velocity_y < 0
+
     def apply_gravity(self, current_y: int, floor_y: int) -> Tuple[int, bool]:
         """
         Aplica gravedad y retorna (nueva_posicion_y, ha_aterrizado).
         """
-        if current_y < floor_y:
+        if current_y < floor_y or self.velocity_y < 0:
             self.velocity_y = min(self.velocity_y + self.gravity, self.terminal_velocity)
             new_y = current_y + int(self.velocity_y)
-            if new_y >= floor_y:
+            if new_y >= floor_y and self.velocity_y >= 0:
                 self.velocity_y = 0.0
                 return floor_y, True
             return new_y, False

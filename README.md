@@ -16,12 +16,16 @@ Built with **Python**, **PyQt6**, and **Win32 API**.
   - `Idle`: Breathes and observes your desktop.
   - `Walk Left / Right`: Wanders around the desktop and screen edges.
   - `Sitting & Sleeping`: Takes naps periodically or on demand.
-  - `Hunt Mouse`: Chases and tracks your cursor across the screen.
+  - `Hunt Mouse`: Active real-time cursor tracking, turning, speed bursts, and failure recognition.
+  - `Jump`: Vertical leap to catch high-altitude targets in mid-air.
+  - `Carrying Mouse`: Holds the Windows cursor in his jaws and physically drags it along the screen!
   - `Eating & Drinking`: Custom animations for meals and drinks.
   - `Petted`: Responds happily to love and attention.
-  - `Dizzy`: Gets dizzy if shaken too vigorously.
+  - `Dizzy`: Gets dizzy if shaken or if the cursor spins rapidly in circles around him.
   - `Angry`: Reacts if held up too high near the top of the screen.
 - **Rich Mouse Interactions:**
+  - **Real Cursor Chase & Catch:** Hackmon actively chases your cursor, jumps if it flies overhead, and clamps down on it when caught.
+  - **Cursor Swirl Dizziness:** Circling the cursor around Hackmon will make him dizzy.
   - **Drag & Drop:** Pick up Hackmon and drop him anywhere; watch him fall with gravity.
   - **Shake Detection:** Shaking Hackmon rapidly while dragging triggers the dizzy animation and dialogue.
   - **High-altitude Detection:** Holding him too high makes him grumpy.

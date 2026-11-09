@@ -4,6 +4,7 @@ Controlador de estados, inteligencia artificial y comportamiento de Hackmon.
 from enum import Enum, auto
 import random
 import math
+from typing import Tuple, Optional
 
 class BuddyState(Enum):
     IDLE = auto()
@@ -16,6 +17,8 @@ class BuddyState(Enum):
     DIZZY = auto()
     ANGRY = auto()
     HUNT_MOUSE = auto()
+    JUMP = auto()
+    CARRYING_MOUSE = auto()
     EATING = auto()
     DRINKING = auto()
     PETTED = auto()
@@ -29,21 +32,107 @@ class BehaviorController:
 
         # Alimento o bebida actual
         self.current_item = None
-        self.current_item_type = None # 'food' o 'drink'
+        self.current_item_type = None  # 'food' o 'drink'
 
         # Frase o mensaje pendiente para el bocadillo de diálogo
         self.pending_message = None
 
-    def update(self, mouse_x: int, mouse_y: int, buddy_x: int, buddy_y: int) -> BuddyState:
+        # Variables para la mecánica de caza y salto
+        self.wants_jump = False
+        self.jump_vx = 0.0
+        self.hunt_jump_cooldown = 0
+        self.is_holding_mouse = False
+        self.carry_timer = 0
+        self.carry_duration = 150  # ~2.5 segundos a 60 fps
+        self.carry_target_x = None
+
+        # Variables para detección de mareo por círculos del ratón (swirl)
+        self._prev_mouse_angle = None
+        self._swirl_angle_acc = 0.0
+
+    def get_mouth_position(self, buddy_x: int, buddy_y: int, buddy_w: int, buddy_h: int) -> Tuple[float, float]:
+        """Calcula las coordenadas exactas de la boca según la orientación de Hackmon."""
+        if self.facing_left:
+            mouth_x = buddy_x + buddy_w * 0.20
+        else:
+            mouth_x = buddy_x + buddy_w * 0.80
+        mouth_y = buddy_y + buddy_h * 0.45
+        return mouth_x, mouth_y
+
+    def check_swirl(self, mouse_x: int, mouse_y: int, center_x: float, center_y: float) -> bool:
+        """
+        Detecta si el usuario está haciendo girar el ratón en círculos rápidos alrededor de Hackmon.
+        Si completa ~2.5 vueltas continuas, retorna True para marearlo.
+        """
+        dist = math.hypot(mouse_x - center_x, mouse_y - center_y)
+        # Solo evaluar si el cursor orbita a una distancia coherente (entre 25px y 350px)
+        if dist < 25 or dist > 350:
+            self._prev_mouse_angle = None
+            self._swirl_angle_acc *= 0.95
+            return False
+
+        current_angle = math.atan2(mouse_y - center_y, mouse_x - center_x)
+        if self._prev_mouse_angle is not None:
+            delta = current_angle - self._prev_mouse_angle
+            # Normalizar al intervalo [-pi, pi]
+            while delta > math.pi:
+                delta -= 2 * math.pi
+            while delta < -math.pi:
+                delta += 2 * math.pi
+
+            # Filtrar brincos exagerados
+            if abs(delta) < 1.4:
+                # Si invierte el sentido de giro, amortiguar en lugar de sumar
+                if (delta > 0 and self._swirl_angle_acc < 0) or (delta < 0 and self._swirl_angle_acc > 0):
+                    self._swirl_angle_acc = delta
+                else:
+                    self._swirl_angle_acc += delta
+
+        self._prev_mouse_angle = current_angle
+
+        # ~2.4 vueltas continuas acumuladas en rad (2.4 * 2*pi ≈ 15.0 rad)
+        if abs(self._swirl_angle_acc) >= 15.0:
+            self._swirl_angle_acc = 0.0
+            self._prev_mouse_angle = None
+            return True
+
+        # Decaimiento natural en cada tick si reduce la velocidad
+        self._swirl_angle_acc *= 0.97
+        return False
+
+    def update(
+        self,
+        mouse_x: int,
+        mouse_y: int,
+        buddy_x: int,
+        buddy_y: int,
+        buddy_w: int = 104,
+        buddy_h: int = 86,
+        is_in_air: bool = False
+    ) -> BuddyState:
         """Actualiza el estado periódicamente y reacciona al ratón y al entorno."""
         self.state_timer += 1
+        if self.hunt_jump_cooldown > 0:
+            self.hunt_jump_cooldown -= 1
 
-        # Estados especiales con duración fija
+        center_x = buddy_x + buddy_w / 2.0
+        center_y = buddy_y + buddy_h / 2.0
+
+        # 1. Estados especiales protegidos
         if self.state in (BuddyState.DRAGGED, BuddyState.FALLING):
+            self._prev_mouse_angle = None
             return self.state
 
+        # 2. Detección de mareo por círculos (activo en reposo, paseo o caza)
+        if self.state in (BuddyState.IDLE, BuddyState.SIT, BuddyState.WALK_LEFT, BuddyState.WALK_RIGHT, BuddyState.HUNT_MOUSE):
+            if self.check_swirl(mouse_x, mouse_y, center_x, center_y):
+                self.is_holding_mouse = False
+                self.set_state(BuddyState.DIZZY)
+                self.pending_message = "¡Ay! ¡Demasiadas vueltas... qué mareo!"
+                return self.state
+
         if self.state == BuddyState.DIZZY:
-            if self.state_timer >= 100:
+            if self.state_timer >= 110:
                 self.set_state(BuddyState.SIT)
                 self.pending_message = "¡Uff... ya no veo estrellitas!"
             return self.state
@@ -67,35 +156,87 @@ class BehaviorController:
             return self.state
 
         if self.state == BuddyState.SLEEP:
-            # Duerme profundamente hasta que expire o se le despierte
             if self.state_timer >= self.state_duration:
                 self.set_state(BuddyState.SIT)
                 self.pending_message = "*(Bostezo)*... Buenos días."
             return self.state
 
-        # Modo Caza de ratón
-        if self.state == BuddyState.HUNT_MOUSE:
-            dist_x = mouse_x - buddy_x
-            dist_y = mouse_y - buddy_y
-            dist = math.hypot(dist_x, dist_y)
-
-            # Orientar hacia el ratón
-            self.facing_left = (dist_x < 0)
-
-            # Si el ratón está cerca, 'atraparlo'
-            if dist < 45 or self.state_timer >= 120:
+        # 3. Estado: Sujetando y Llevándose el Cursor
+        if self.state == BuddyState.CARRYING_MOUSE:
+            self.carry_timer += 1
+            if self.carry_timer >= self.carry_duration:
+                self.is_holding_mouse = False
                 self.set_state(BuddyState.PETTED)
-                self.pending_message = "¡Te atrapé! ¡Mis reflejos de dragón nunca fallan!"
+                self.pending_message = "¡Jajaja! ¡Buen juego, te dejo libre por ahora!"
             return self.state
 
-        # Actualización de estados normales (IDLE, WALK, SIT)
+        # 4. Estado: En pleno salto de caza
+        if self.state == BuddyState.JUMP:
+            mouth_x, mouth_y = self.get_mouth_position(buddy_x, buddy_y, buddy_w, buddy_h)
+            dist_to_mouth = math.hypot(mouse_x - mouth_x, mouse_y - mouth_y)
+            # Detección de captura en el aire
+            if dist_to_mouth < 32:
+                self.is_holding_mouse = True
+                self.carry_timer = 0
+                self.set_state(BuddyState.CARRYING_MOUSE)
+                self.pending_message = "¡Te atrapé en el aire! ¡Toma ya!"
+                return self.state
+
+            # Si ya aterrizó y no atrapó el cursor
+            if not is_in_air:
+                self.set_state(BuddyState.HUNT_MOUSE)
+            return self.state
+
+        # 5. Modo Caza de ratón real
+        if self.state == BuddyState.HUNT_MOUSE:
+            # Orientación inmediata hacia el cursor
+            self.facing_left = (mouse_x < center_x)
+
+            mouth_x, mouth_y = self.get_mouth_position(buddy_x, buddy_y, buddy_w, buddy_h)
+            dist_to_mouth = math.hypot(mouse_x - mouth_x, mouse_y - mouth_y)
+
+            # ¡Atrapado real! La boca hace contacto con el cursor
+            if dist_to_mouth < 28:
+                self.is_holding_mouse = True
+                self.carry_timer = 0
+                self.set_state(BuddyState.CARRYING_MOUSE)
+                self.pending_message = random.choice([
+                    "¡Te atrapé! ¡Ahora eres mi presa!",
+                    "¡Ñam! ¡Tengo el cursor en mis mandíbulas!",
+                    "¡Mis reflejos de dragón nunca fallan!"
+                ])
+                return self.state
+
+            # Detección de salto si el cursor está elevado
+            if not is_in_air and self.hunt_jump_cooldown <= 0:
+                if mouse_y < buddy_y - 45 and abs(mouse_x - center_x) < 280:
+                    self.wants_jump = True
+                    self.hunt_jump_cooldown = 80
+                    dx = mouse_x - center_x
+                    self.jump_vx = max(-6.0, min(6.0, dx * 0.05))
+                    self.set_state(BuddyState.JUMP)
+                    return self.state
+
+            # Tiempo límite de caza: Si no lo atrapa en ~8 segundos, reconoce el fallo
+            if self.state_timer >= 480:
+                self.set_state(BuddyState.SIT)
+                self.pending_message = random.choice([
+                    "¡Rayos, eres muy rápido!",
+                    "¡Uff, se me escapó el cursor!",
+                    "¡Casi lo tenía... a la próxima no te escaparás!"
+                ])
+                return self.state
+
+            return self.state
+
+        # 6. Actualización de estados normales (IDLE, WALK, SIT)
         if self.state_timer >= self.state_duration:
             self.state_timer = 0
             self.state_duration = random.randint(70, 200)
 
-            # Posibilidad aleatoria de cazar el ratón si está en pantalla
-            dist_to_mouse = math.hypot(mouse_x - buddy_x, mouse_y - buddy_y)
-            if dist_to_mouse < 300 and random.random() < 0.12:
+            # Ocasionalmente iniciar caza espontánea si el ratón está cerca
+            dist_to_mouse = math.hypot(mouse_x - center_x, mouse_y - center_y)
+            if dist_to_mouse < 350 and random.random() < 0.15:
                 self.set_state(BuddyState.HUNT_MOUSE)
                 self.pending_message = "¡Veo una presa! ¡A por el cursor!"
                 return self.state
@@ -128,7 +269,7 @@ class BehaviorController:
                 self.facing_left = False
             elif next_action in (BuddyState.IDLE, BuddyState.SIT):
                 # En reposo, mirar hacia donde esté el ratón
-                self.facing_left = (mouse_x < buddy_x)
+                self.facing_left = (mouse_x < center_x)
 
         return self.state
 

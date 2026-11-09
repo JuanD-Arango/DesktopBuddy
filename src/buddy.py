@@ -3,6 +3,7 @@ Ventana principal transparente, animaciones y control interactivo de Hackmon.
 """
 from pathlib import Path
 import math
+import win32api
 from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtWidgets import QWidget, QLabel, QMenu, QApplication
 from PyQt6.QtGui import QMouseEvent, QAction, QPixmap, QCursor, QTransform, QIcon
@@ -49,6 +50,8 @@ class DesktopBuddy(QWidget):
             BuddyState.DIZZY: base_dir / "dizzy",
             BuddyState.ANGRY: base_dir / "angry",
             BuddyState.HUNT_MOUSE: base_dir / "hunt",
+            BuddyState.JUMP: base_dir / "jump",
+            BuddyState.CARRYING_MOUSE: base_dir / "hunt",
             BuddyState.EATING: base_dir / "eat",
             BuddyState.DRINKING: base_dir / "drink",
             BuddyState.PETTED: base_dir / "petted",
@@ -133,7 +136,9 @@ class DesktopBuddy(QWidget):
             BuddyState.SLEEP: 18,
             BuddyState.DIZZY: 8,
             BuddyState.ANGRY: 10,
-            BuddyState.HUNT_MOUSE: 8,
+            BuddyState.HUNT_MOUSE: 7,
+            BuddyState.JUMP: 8,
+            BuddyState.CARRYING_MOUSE: 6,
             BuddyState.EATING: 10,
             BuddyState.DRINKING: 10,
             BuddyState.PETTED: 10,
@@ -146,7 +151,7 @@ class DesktopBuddy(QWidget):
                 self.current_frame = (self.current_frame + 1) % len(frames)
             self._update_display_sprite()
 
-        # 2. Mensajes y sonidos pendientes
+        # 2. Mensajes pendientes
         if self.behavior.pending_message:
             self.speech_bubble.show_message(
                 self.behavior.pending_message,
@@ -159,13 +164,76 @@ class DesktopBuddy(QWidget):
         taskbar_floor_y = screen.bottom() - self.height()
         hwnd = int(self.winId())
 
-        # Encontrar el suelo más cercano (barra de tareas o techo de ventanas como Teams/Excel)
+        # Encontrar el suelo más cercano (barra de tareas o ventanas abiertas)
         floor_y = self.physics.find_nearest_floor(
             self.y(), self.x(), self.width(), self.height(), taskbar_floor_y, hwnd
         )
+        is_in_air = self.physics.is_in_air(self.y(), floor_y)
 
         if not self._drag_active:
-            if self.y() < floor_y:
+            prev_state = self.behavior.state
+
+            # Disparar salto físico si la IA lo requiere
+            if self.behavior.wants_jump:
+                self.physics.jump(16.5)
+                self.behavior.wants_jump = False
+                self.current_frame = 0
+
+            # Actualizar comportamiento con datos en tiempo real
+            state = self.behavior.update(
+                mouse_x, mouse_y,
+                self.x(), self.y(),
+                self.width(), self.height(),
+                is_in_air=is_in_air
+            )
+
+            # Efectos de sonido y reinicio de animación al cambiar de estado
+            if state != prev_state:
+                self.current_frame = 0
+                if state == BuddyState.DIZZY:
+                    self.sounds.play("dizzy")
+                elif state == BuddyState.CARRYING_MOUSE:
+                    self.sounds.play("eat")
+                self._update_display_sprite()
+
+            # --- MANEJO DE MOVIMIENTO SEGÚN ESTADO ---
+
+            # A. Sujetando el ratón con la boca y llevándoselo
+            if state == BuddyState.CARRYING_MOUSE:
+                move_speed = 3
+                carry_dx = -move_speed if self.behavior.facing_left else move_speed
+                new_x = self.x() + carry_dx
+                new_x, hit = self.physics.check_screen_bounds(new_x, self.width(), screen.left(), screen.right())
+                if hit:
+                    self.behavior.facing_left = not self.behavior.facing_left
+                self.move(new_x, self.y())
+
+                # Fijar físicamente el cursor de Windows en la boca de Hackmon
+                mouth_x, mouth_y = self.behavior.get_mouth_position(
+                    self.x(), self.y(), self.width(), self.height()
+                )
+                try:
+                    win32api.SetCursorPos((int(mouth_x), int(mouth_y)))
+                except Exception:
+                    pass
+
+            # B. En pleno salto parabólico hacia el cursor
+            elif state == BuddyState.JUMP:
+                # Desplazamiento horizontal del salto
+                new_x = int(self.x() + self.behavior.jump_vx)
+                new_x, _ = self.physics.check_screen_bounds(new_x, self.width(), screen.left(), screen.right())
+                
+                # Desplazamiento vertical por gravedad
+                new_y, landed = self.physics.apply_gravity(self.y(), floor_y)
+                self.move(new_x, new_y)
+
+                if landed:
+                    self.sounds.play("thud")
+                    self.behavior.set_state(BuddyState.HUNT_MOUSE)
+                    self.current_frame = 0
+
+            # C. Caída libre normal
+            elif state == BuddyState.FALLING or (self.y() < floor_y and state not in (BuddyState.JUMP, BuddyState.CARRYING_MOUSE)):
                 if self.behavior.state != BuddyState.FALLING:
                     self.behavior.set_state(BuddyState.FALLING)
                     self.current_frame = 0
@@ -174,36 +242,39 @@ class DesktopBuddy(QWidget):
                 if landed:
                     self.sounds.play("thud")
                     self.behavior.set_state(BuddyState.IDLE)
-                    self.current_frame = 0
-            else:
-                if self.behavior.state == BuddyState.FALLING:
-                    self.sounds.play("thud")
-                    self.behavior.set_state(BuddyState.IDLE)
                     self.physics.reset()
                     self.current_frame = 0
 
-                prev_state = self.behavior.state
-                state = self.behavior.update(mouse_x, mouse_y, self.x(), self.y())
-                if state != prev_state:
-                    self.current_frame = 0
-                    self._update_display_sprite()
+            # D. En el suelo (Caza o paseo)
+            else:
+                if state == BuddyState.HUNT_MOUSE:
+                    # Velocidad dinámica según la distancia al cursor
+                    dist_to_mouse_x = abs(mouse_x - (self.x() + self.width() // 2))
+                    move_speed = 5 if dist_to_mouse_x > 180 else 3
 
-                # Movimiento horizontal
-                move_speed = 3 if state == BuddyState.HUNT_MOUSE else 2
-                if state in (BuddyState.WALK_LEFT, BuddyState.HUNT_MOUSE) and self.behavior.facing_left:
-                    new_x = self.x() - move_speed
+                    if self.behavior.facing_left:
+                        new_x = self.x() - move_speed
+                    else:
+                        new_x = self.x() + move_speed
+
                     new_x, hit = self.physics.check_screen_bounds(new_x, self.width(), screen.left(), screen.right())
                     if hit:
                         self.behavior.turn_around(hit)
                     self.move(new_x, self.y())
-                elif state in (BuddyState.WALK_RIGHT, BuddyState.HUNT_MOUSE) and not self.behavior.facing_left:
-                    new_x = self.x() + move_speed
+
+                elif state in (BuddyState.WALK_LEFT, BuddyState.WALK_RIGHT):
+                    move_speed = 2
+                    if state == BuddyState.WALK_LEFT:
+                        new_x = self.x() - move_speed
+                    else:
+                        new_x = self.x() + move_speed
+
                     new_x, hit = self.physics.check_screen_bounds(new_x, self.width(), screen.left(), screen.right())
                     if hit:
                         self.behavior.turn_around(hit)
                     self.move(new_x, self.y())
         else:
-            # Mientras se arrastra: calcular sacudida y altura
+            # Mientras se arrastra con el ratón: calcular sacudida y altura
             screen_top = screen.top()
             screen_h = screen.height()
             if self.y() < screen_top + screen_h * 0.25:
@@ -214,6 +285,15 @@ class DesktopBuddy(QWidget):
     # Eventos de interacción con el ratón
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
+            # Si estaba sujetando el cursor, liberarlo de inmediato al hacer clic
+            if self.behavior.is_holding_mouse:
+                self.behavior.is_holding_mouse = False
+                self.behavior.set_state(BuddyState.PETTED)
+                self.sounds.play("purr")
+                self._update_display_sprite()
+                event.accept()
+                return
+
             self._drag_active = True
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             self._prev_drag_pos = event.globalPosition().toPoint()
@@ -231,7 +311,7 @@ class DesktopBuddy(QWidget):
             curr_pos = event.globalPosition().toPoint()
             self.move(curr_pos - self._drag_pos)
 
-            # Detector de sacudidas de ratón
+            # Detector de sacudidas de ratón al arrastrarlo
             dx = curr_pos.x() - self._prev_drag_pos.x()
             if abs(dx) > 18:
                 if (dx > 0 and self._prev_drag_dx < 0) or (dx < 0 and self._prev_drag_dx > 0):
@@ -243,7 +323,7 @@ class DesktopBuddy(QWidget):
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_active = False
-            # Determinar si se mareó o se enojó
+            # Determinar si se mareó o se enojó al soltarlo
             if self._shake_count >= 5:
                 self.behavior.set_state(BuddyState.DIZZY)
                 self.sounds.play("dizzy")
