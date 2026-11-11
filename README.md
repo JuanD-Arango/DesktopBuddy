@@ -1,4 +1,5 @@
 # Hackmon Desktop Buddy 🐉
+<img width="1918" height="398" alt="Hackmon Behavior 1" src="https://github.com/user-attachments/assets/83c59f51-797d-4915-8f72-edabee87852c" />
 
 A virtual companion that hangs out on your screen to keep you company, walking around, talking occasionally, sleeping, eating, and letting you play with it—while occasionally trying to troll you. It will gradually get updates to learn new tricks!
 
